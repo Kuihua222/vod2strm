@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <title>STRM Studio</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="layout">
+    <!-- 左侧导航栏 -->
+    <aside class="sidebar">
+        <div class="logo">STRM Studio</div>
+        <div class="menu">
+            <div class="menu-item active" onclick="switchTab('home', this)">
+                <span>🏠</span> 资源大厅
+            </div>
+            <div class="menu-item" onclick="switchTab('mine', this)">
+                <span>📁</span> 我的媒体库
+            </div>
+            <div class="menu-item" onclick="switchTab('settings', this)">
+                <span>⚙️</span> 设置
+            </div>
+        </div>
+        
+        <div id="categoryBox" class="category-box hidden">
+            <h3>分类筛选</h3>
+            <div id="catList" class="cat-list"></div>
+        </div>
+    </aside>
+
+    <!-- 右侧页面主体 -->
+    <main class="main">
+        <div class="top-bar">
+            <select id="sourceSelect" class="source-select" onchange="onSourceChange()"></select>
+            <div class="search-container">
+                <input id="searchInput" class="search-box" placeholder="聚合搜索全网资源..." oninput="doSearchDebounced()">
+                <button onclick="doSearch()" class="search-btn">🔍</button>
+            </div>
+        </div>
+
+        <!-- 资源大厅页面 -->
+        <section id="tab-home" class="tab-page active page-explore">
+            <div class="action-bar">
+                <span id="statusText" class="status-bar">准备就绪</span>
+                <button id="batchGenerateBtn" onclick="openBatchModal()" class="btn batch-btn hidden">批量生成 (0)</button>
+            </div>
+            
+            <div id="posterGrid" class="poster-grid"></div>
+            
+            <div class="pagination">
+                <button onclick="changePage(-1)" class="btn">上一页</button>
+                <span id="pageInfo">1 / 1</span>
+                <button onclick="changePage(1)" class="btn">下一页</button>
+            </div>
+        </section>
+
+        <!-- 我的媒体库页面 -->
+        <section id="tab-mine" class="tab-page page-library">
+            <h2 class="page-title">我的媒体库</h2>
+            <div class="page-header-actions">
+                <button onclick="cleanInvalidDB()" class="btn danger-btn">🧹 清理无效记录</button>
+                <button onclick="loadMyStrm()" class="btn refresh-btn">🔄 刷新列表</button>
+            </div>
+            
+            <table class="media-table">
+                <thead>
+                    <tr>
+                        <th>海报</th>
+                        <th>名称</th>
+                        <th>类型</th>
+                        <th>入库时间</th>
+                        <th>源索引</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="myStrmList"></tbody>
+            </table>
+        </section>
+
+        <!-- 设置页面 -->
+        <section id="tab-settings" class="tab-page page-settings">
+            <h2 class="page-title">设置</h2>
+            <div class="settings-grid">
+                <div class="settings-card">
+                    <h3>资源源配置 (JSON数组)</h3>
+                    <textarea id="cfgSources" class="json-input" rows="5" placeholder='["https://.../api.php/provide/vod/"]'></textarea>
+                    <button onclick="saveSettings()" class="btn primary">保存</button>
+                </div>
+                
+                <div class="settings-card">
+                    <h3>播放设置</h3>
+                    <label>本地播放器 Scheme (Preview用)</label>
+                    <input type="text" id="cfgScheme" class="input" placeholder="SenPlayer://x-callback-url/play?url=">
+                    
+                    <label>TMDB API Key (可选，用于刮削海报/NFO)</label>
+                    <input type="text" id="cfgTmdb" class="input">
+                    <button onclick="saveSettings()" class="btn primary">保存</button>
+                </div>
+                
+                <div class="settings-card">
+                    <h3>安全与网络</h3>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="cfgAntiBlock">
+                        <label for="cfgAntiBlock">开启防封模式 (请求随机延迟)</label>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="cfgImgProxy">
+                        <label for="cfgImgProxy">强制图片代理 (解决海报不显示问题)</label>
+                    </div>
+                    <button onclick="saveSettings()" class="btn primary">保存</button>
+                </div>
+            </div>
+        </section>
+    </main>
+</div>
+
+<!-- 详情抽屉 -->
+<div id="modal" class="drawer">
+    <div class="drawer-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+        <div class="drawer-layout">
+            <div class="drawer-left">
+                <img id="mPic" src="" class="drawer-poster">
+            </div>
+            <div class="drawer-right">
+                <h2 id="mTitle"></h2>
+                <div class="meta-row">
+                    <span id="mYear" class="badge"></span>
+                    <span id="mType" class="badge"></span>
+                    <span id="mArea" class="badge"></span>
+                </div>
+                <div class="desc-box" id="mDesc"></div>
+                
+                <h3>选择线路</h3>
+                <div id="sourceTabs" class="source-tabs"></div>
+                
+                <div class="preview-row">
+                    <span>共 <b id="epCount">0</b> 集 (点击集数可选中)</span>
+                    <button id="btnPreview" class="btn preview-btn">🎥 预览选中集</button>
+                </div>
+                
+                <div class="file-list-box">
+                    <div id="fileList" class="file-list"></div>
+                </div>
+                
+                <div class="log-console" id="genLog"></div>
+                
+                <div class="action-footer">
+                    <button id="btnGenerate" class="btn primary full-width">📥 生成 STRM 文件</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 批量生成模态框 -->
+<div id="batchModal" class="drawer">
+    <div class="drawer-content batch-modal-content">
+        <span class="close" onclick="closeBatchModal()">&times;</span>
+        <h2>批量生成确认</h2>
+        <div class="alert-box">
+            ⚠️ 提示：如果批量数量较多，系统将自动开启防风控延迟，请耐心等待。
+        </div>
+        <div id="batchList" class="batch-list"></div>
+        <div id="batchLog" class="log-console" style="height: 150px;"></div>
+        <button id="startBatchBtn" onclick="startBatchGeneration()" class="btn primary full-width">开始执行</button>
+    </div>
+</div>
+
+<!-- 智能换源模态框 -->
+<div id="smartSwitchModal" class="drawer">
+    <div class="drawer-content">
+        <span class="close" onclick="closeSmartSwitchModal()">&times;</span>
+        <h2>♻️ 智能换源 (仅替换链接)</h2>
+        <p>正在为 <b id="ssName" style="color:var(--primary)"></b> 搜索可用源...</p>
+        <div id="ssList" class="ss-list"></div>
+        <div id="ssLog" class="log-console" style="height: 100px; display:none;"></div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
