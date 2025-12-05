@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VOD影视聚合 - STRM生成器</title>
     <style>
-        /* 基础样式 */
         * {
             margin: 0;
             padding: 0;
@@ -63,7 +62,6 @@
             color: #e50914;
         }
         
-        /* 海报墙样式 */
         .poster-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -76,6 +74,7 @@
             border-radius: 8px;
             overflow: hidden;
             transition: transform 0.3s, box-shadow 0.3s;
+            cursor: pointer;
         }
         
         .poster-item:hover {
@@ -92,6 +91,9 @@
             justify-content: center;
             color: white;
             font-weight: bold;
+            font-size: 24px;
+            text-align: center;
+            padding: 20px;
         }
         
         .poster-info {
@@ -112,7 +114,6 @@
             font-size: 14px;
         }
         
-        /* 详情页样式 */
         .detail-container {
             display: flex;
             gap: 30px;
@@ -128,6 +129,7 @@
             justify-content: center;
             color: white;
             font-weight: bold;
+            font-size: 36px;
             border-radius: 8px;
         }
         
@@ -165,8 +167,9 @@
             transition: background-color 0.3s;
         }
         
-        .source-item:hover {
+        .source-item:hover, .source-item.selected {
             background-color: #3a3a3a;
+            border-left: 4px solid #e50914;
         }
         
         .source-name {
@@ -221,7 +224,6 @@
             background-color: #444;
         }
         
-        /* 配置页面样式 */
         .config-form {
             background-color: #2a2a2a;
             padding: 30px;
@@ -255,7 +257,6 @@
             border-color: #e50914;
         }
         
-        /* STRM管理页面样式 */
         .strm-list {
             margin-top: 20px;
         }
@@ -291,7 +292,6 @@
             gap: 10px;
         }
         
-        /* 加载状态 */
         .loading {
             text-align: center;
             padding: 40px;
@@ -314,23 +314,6 @@
             100% { transform: rotate(360deg); }
         }
         
-        /* 响应式设计 */
-        @media (max-width: 768px) {
-            .poster-grid {
-                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            }
-            
-            .detail-container {
-                flex-direction: column;
-            }
-            
-            .poster-large {
-                width: 100%;
-                height: 300px;
-            }
-        }
-        
-        /* 模态框样式 */
         .modal {
             display: none;
             position: fixed;
@@ -350,6 +333,7 @@
             border-radius: 8px;
             max-width: 500px;
             width: 90%;
+            position: relative;
         }
         
         .modal-title {
@@ -370,6 +354,29 @@
         .modal-close:hover {
             color: white;
         }
+        
+        @media (max-width: 768px) {
+            .poster-grid {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            }
+            
+            .detail-container {
+                flex-direction: column;
+            }
+            
+            .poster-large {
+                width: 100%;
+                height: 300px;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -384,7 +391,6 @@
         </header>
 
         <main id="main-content">
-            <!-- 首页 - 海报墙 -->
             <div id="home-page">
                 <h1 class="section-title">热门影视</h1>
                 <div class="poster-grid" id="poster-grid">
@@ -395,7 +401,6 @@
                 </div>
             </div>
 
-            <!-- 我的STRM页面 -->
             <div id="strm-page" style="display: none;">
                 <h1 class="section-title">我的STRM文件</h1>
                 <div class="action-buttons">
@@ -410,7 +415,6 @@
                 </div>
             </div>
 
-            <!-- 配置页面 -->
             <div id="config-page" style="display: none;">
                 <h1 class="section-title">系统设置</h1>
                 <div class="config-form">
@@ -442,7 +446,6 @@
         </main>
     </div>
 
-    <!-- 详情页模态框 -->
     <div class="modal" id="detail-modal">
         <div class="modal-content">
             <span class="modal-close" id="close-modal">&times;</span>
@@ -456,7 +459,6 @@
         </div>
     </div>
 
-    <!-- 编辑STRM模态框 -->
     <div class="modal" id="edit-strm-modal">
         <div class="modal-content">
             <span class="modal-close" id="close-edit-modal">&times;</span>
@@ -484,13 +486,14 @@
         </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script>
         // ======================
         // 配置管理
         // ======================
         class ConfigManager {
             static DEFAULT_CONFIG = {
-                vodApiUrl: 'http://caiji.dyttzyapi.com/api.php/provide/vod/',
+                vodApiUrl: 'https://caiji.maotaizy.cc/api.php/provide/vod/from/mtm3u8/at/josn/',
                 playerScheme: 'SenPlayer://x-callback-url/play?url=',
                 embyLibraryType: 'movie',
                 embyLibraryName: 'Movies'
@@ -508,13 +511,11 @@
             static init() {
                 const config = this.getConfig();
                 
-                // 初始化配置页面
                 document.getElementById('vod-api-url').value = config.vodApiUrl;
                 document.getElementById('player-scheme').value = config.playerScheme || '';
                 document.getElementById('emby-library-type').value = config.embyLibraryType;
                 document.getElementById('emby-library-name').value = config.embyLibraryName || (config.embyLibraryType === 'movie' ? 'Movies' : 'TV Shows');
                 
-                // 保存配置按钮
                 document.getElementById('save-config-btn').addEventListener('click', () => {
                     const newConfig = {
                         vodApiUrl: document.getElementById('vod-api-url').value.trim(),
@@ -561,12 +562,6 @@
                 }
             }
 
-            static deleteStrmFile(index) {
-                const files = this.getStrmFiles();
-                files.splice(index, 1);
-                this.saveStrmFiles(files);
-            }
-
             static generateStrmContent(url) {
                 return url;
             }
@@ -574,13 +569,11 @@
             static generateEmbyCompatiblePath(movieData, episode = null) {
                 const config = ConfigManager.getConfig();
                 const name = movieData.vod_name || movieData.name;
-                const year = movieData.vod_year || '2024';
+                const year = movieData.vod_year || '2025';
                 
                 if (config.embyLibraryType === 'movie') {
-                    // 电影格式: Movies/电影名 (年份)/电影名 (年份).strm
                     return `${config.embyLibraryName}/${name} (${year})/${name} (${year}).strm`;
                 } else {
-                    // 剧集格式: TV Shows/剧集名 (年份)/Season 01/剧集名 - S01E01.strm
                     const season = episode ? `Season ${String(episode.season || 1).padStart(2, '0')}` : 'Season 01';
                     const episodeNum = episode ? episode.number : 1;
                     const episodeStr = `S${String(episode ? episode.season : 1).padStart(2, '0')}E${String(episodeNum).padStart(2, '0')}`;
@@ -598,7 +591,6 @@
                 const config = ConfigManager.getConfig();
                 const url = new URL(config.vodApiUrl);
                 
-                // 添加查询参数
                 url.searchParams.append('ac', 'list');
                 if (searchTerm) {
                     url.searchParams.append('wd', searchTerm);
@@ -653,17 +645,19 @@
             }
 
             static parsePlaySources(playFrom, playUrl) {
-                // 解析播放源
                 const sources = [];
                 const playFroms = playFrom.split('$$$');
                 const playUrls = playUrl.split('$$$');
                 
                 for (let i = 0; i < Math.min(playFroms.length, playUrls.length); i++) {
                     const sourceName = playFroms[i].trim();
-                    const sourceUrl = playUrls[i].trim();
+                    let sourceUrl = playUrls[i].trim();
+                    
+                    if (sourceUrl.endsWith('##')) {
+                        sourceUrl = sourceUrl.slice(0, -2);
+                    }
                     
                     if (sourceUrl && sourceUrl !== '#') {
-                        // 处理剧集格式
                         if (sourceUrl.includes('#')) {
                             const episodes = sourceUrl.split('#').filter(ep => ep && ep.includes('$'));
                             episodes.forEach(ep => {
@@ -678,23 +672,23 @@
                                 }
                             });
                         } else if (sourceUrl.includes('$')) {
-                            // 处理电影格式
-                            const [quality, url] = sourceUrl.split('$');
+                            const parts = sourceUrl.split('$');
+                            const quality = parts[0] || '默认';
+                            const url = parts[1] || parts[0];
                             if (url) {
                                 sources.push({
                                     name: sourceName,
-                                    title: quality ? quality.trim() : '默认',
+                                    title: quality.trim(),
                                     url: url.trim(),
-                                    type: 'movie'
+                                    type: parts.length > 1 ? 'movie' : 'direct'
                                 });
                             }
                         } else {
-                            // 直接URL
                             sources.push({
                                 name: sourceName,
                                 title: '默认',
                                 url: sourceUrl,
-                                type: 'movie'
+                                type: 'direct'
                             });
                         }
                     }
@@ -725,9 +719,9 @@
                 movies.forEach(movie => {
                     html += `
                         <div class="poster-item" data-id="${movie.vod_id}">
-                            <div class="poster-img">${movie.vod_name.substring(0, 4)}</div>
+                            <div class="poster-img">${this.getInitials(movie.vod_name)}</div>
                             <div class="poster-info">
-                                <div class="poster-title">${movie.vod_name}</div>
+                                <div class="poster-title">${this.truncateText(movie.vod_name, 12)}</div>
                                 <div class="poster-meta">${movie.type_name || '未知类型'} • ${movie.vod_remarks || ''}</div>
                             </div>
                         </div>
@@ -736,13 +730,20 @@
                 
                 grid.innerHTML = html;
                 
-                // 添加点击事件
                 document.querySelectorAll('.poster-item').forEach(item => {
                     item.addEventListener('click', async () => {
                         const vodId = item.getAttribute('data-id');
                         await this.showDetailModal(vodId);
                     });
                 });
+            }
+
+            static getInitials(text) {
+                return text.substring(0, 4);
+            }
+
+            static truncateText(text, maxLength) {
+                return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
             }
 
             static async showDetailModal(vodId) {
@@ -782,16 +783,15 @@
                 
                 modalTitle.textContent = movie.vod_name;
                 
-                // 解析播放源
                 const sources = VodApiClient.parsePlaySources(movie.vod_play_from, movie.vod_play_url);
                 
                 let sourcesHtml = '';
                 sources.forEach((source, index) => {
                     sourcesHtml += `
-                        <div class="source-item" data-url="${encodeURIComponent(source.url)}" data-name="${source.name}" data-title="${source.title}">
+                        <div class="source-item" data-url="${encodeURIComponent(source.url)}" data-name="${source.name}" data-title="${source.title}" data-type="${source.type}">
                             <div class="source-name">${source.name} - ${source.title}</div>
-                            <div class="source-desc">类型: ${source.type === 'movie' ? '电影' : '剧集'}</div>
-                            <div class="source-url">${source.url.substring(0, 50)}${source.url.length > 50 ? '...' : ''}</div>
+                            <div class="source-desc">类型: ${source.type === 'movie' ? '电影' : source.type === 'episode' ? '剧集' : '直链'}</div>
+                            <div class="source-url">${this.truncateText(source.url, 60)}</div>
                         </div>
                     `;
                 });
@@ -802,92 +802,86 @@
                 
                 modalContent.innerHTML = `
                     <div class="detail-container">
-                        <div class="poster-large">${movie.vod_name.substring(0, 4)}</div>
+                        <div class="poster-large">${this.getInitials(movie.vod_name)}</div>
                         <div class="detail-info">
                             <h2 class="detail-title">${movie.vod_name}</h2>
                             <div class="detail-meta">
-                                类型: ${movie.type_name || '未知'} • 状态: ${movie.vod_remarks || '未知'}
+                                类型: ${movie.type_name || '未知'} • 状态: ${movie.vod_remarks || '未知'} • 年份: ${movie.vod_year || '未知'}
                             </div>
                             <div class="sources-list">
                                 <h3 class="sources-title">可用播放源 (${sources.length})</h3>
                                 ${sourcesHtml}
                             </div>
                             <div class="action-buttons">
-                                <button class="btn btn-primary" id="generate-strm-btn">生成STRM文件</button>
-                                <button class="btn btn-secondary" id="test-play-btn">测试播放</button>
+                                <button class="btn btn-primary" id="generate-strm-btn" disabled>生成STRM文件</button>
+                                <button class="btn btn-secondary" id="test-play-btn" disabled>测试播放</button>
                             </div>
                         </div>
                     </div>
                 `;
                 
-                // 添加播放源点击事件
+                let selectedSource = null;
                 document.querySelectorAll('.source-item').forEach(item => {
                     item.addEventListener('click', () => {
-                        document.querySelectorAll('.source-item').forEach(i => i.style.backgroundColor = '');
-                        item.style.backgroundColor = '#3a3a3a';
-                        document.getElementById('generate-strm-btn').setAttribute('data-selected-source', item.getAttribute('data-url'));
+                        document.querySelectorAll('.source-item').forEach(i => i.classList.remove('selected'));
+                        item.classList.add('selected');
+                        selectedSource = {
+                            url: decodeURIComponent(item.getAttribute('data-url')),
+                            name: item.getAttribute('data-name'),
+                            title: item.getAttribute('data-title'),
+                            type: item.getAttribute('data-type')
+                        };
+                        document.getElementById('generate-strm-btn').disabled = false;
+                        document.getElementById('test-play-btn').disabled = false;
                     });
                 });
                 
-                // 生成STRM按钮
                 document.getElementById('generate-strm-btn').addEventListener('click', async () => {
-                    const selectedSource = document.querySelector('.source-item[style*="background-color"]');
                     if (!selectedSource) {
                         alert('请先选择一个播放源！');
                         return;
                     }
                     
-                    const url = decodeURIComponent(selectedSource.getAttribute('data-url'));
-                    const sourceName = selectedSource.getAttribute('data-name');
-                    const sourceTitle = selectedSource.getAttribute('data-title');
-                    
-                    await this.generateStrmFile(movie, url, sourceName, sourceTitle);
+                    await this.generateStrmFile(movie, selectedSource);
                 });
                 
-                // 测试播放按钮
                 document.getElementById('test-play-btn').addEventListener('click', () => {
-                    const selectedSource = document.querySelector('.source-item[style*="background-color"]');
                     if (!selectedSource) {
                         alert('请先选择一个播放源！');
                         return;
                     }
                     
-                    const url = decodeURIComponent(selectedSource.getAttribute('data-url'));
-                    this.testPlayUrl(url);
+                    this.testPlayUrl(selectedSource.url);
                 });
             }
 
-            static async generateStrmFile(movie, url, sourceName, sourceTitle) {
+            static async generateStrmFile(movie, source) {
                 try {
-                    // 验证URL是否有效
-                    const isValid = await this.validateUrl(url);
+                    const isValid = await this.validateUrl(source.url);
                     if (!isValid) {
                         alert('播放地址无效或无法访问！');
                         return;
                     }
                     
-                    // 生成EMBY兼容的STRM文件信息
                     const embyPath = StrmManager.generateEmbyCompatiblePath(movie);
-                    const strmContent = StrmManager.generateStrmContent(url);
+                    const strmContent = StrmManager.generateStrmContent(source.url);
                     
                     const strmData = {
                         name: movie.vod_name,
                         type: movie.type_name,
-                        source: sourceName,
-                        title: sourceTitle,
-                        url: url,
+                        source: source.name,
+                        title: source.title,
+                        url: source.url,
                         embyPath: embyPath,
                         content: strmContent,
                         createdAt: new Date().toISOString(),
                         updatedAt: new Date().toISOString()
                     };
                     
-                    // 保存到本地存储
                     StrmManager.addStrmFile(strmData);
                     
                     alert(`STRM文件生成成功！\n保存路径: ${embyPath}`);
                     
-                    // 关闭模态框
                     document.getElementById('detail-modal').style.display = 'none';
                     
                 } catch (error) {
@@ -898,18 +892,12 @@
 
             static async validateUrl(url) {
                 try {
-                    // 简单验证 - 检查是否是有效的URL格式
                     new URL(url);
                     
-                    // 对于短链接，尝试解析
-                    if (url.includes('api.php') || url.includes('proxy')) {
-                        // 这里可以添加更复杂的解析逻辑
-                        return true;
-                    }
+                    const validExtensions = ['.m3u8', '.mp4', '.mkv', '.avi', '.ts', 'm3u8', 'mp4'];
+                    const lowerUrl = url.toLowerCase();
                     
-                    // 检查文件扩展名
-                    const validExtensions = ['.m3u8', '.mp4', '.mkv', '.avi', '.ts'];
-                    return validExtensions.some(ext => url.toLowerCase().includes(ext));
+                    return validExtensions.some(ext => lowerUrl.includes(ext));
                 } catch (e) {
                     return false;
                 }
@@ -920,52 +908,55 @@
                 const playerScheme = config.playerScheme;
                 
                 if (playerScheme) {
-                    // 使用自定义播放器协议
-                    const encodedUrl = encodeURIComponent(url);
-                    const playUrl = `${playerScheme}${encodedUrl}`;
-                    
                     try {
+                        const encodedUrl = encodeURIComponent(url);
+                        const playUrl = `${playerScheme}${encodedUrl}`;
                         window.location.href = playUrl;
                     } catch (e) {
                         console.error('Player scheme failed:', e);
-                        // 回退到浏览器播放
                         this.openInBrowser(url);
                     }
                 } else {
-                    // 使用浏览器默认播放
                     this.openInBrowser(url);
                 }
             }
 
             static openInBrowser(url) {
-                const newTab = window.open();
-                if (newTab) {
-                    newTab.document.write(`
-                        <html>
-                            <head>
-                                <title>播放: ${url}</title>
-                                <style>
-                                    body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; }
-                                    video { max-width: 90%; max-height: 90%; }
-                                </style>
-                            </head>
-                            <body>
-                                <video controls autoplay>
-                                    <source src="${url}" type="application/x-mpegURL">
-                                    <source src="${url}" type="video/mp4">
-                                    您的浏览器不支持视频播放
-                                </video>
-                                <script>
-                                    // 尝试自动播放
-                                    const video = document.querySelector('video');
-                                    video.play().catch(e => console.log('Autoplay failed:', e));
-                                </script>
-                            </body>
-                        </html>
-                    `);
-                    newTab.document.close();
-                } else {
-                    alert('无法打开新窗口，请允许弹出窗口');
+                try {
+                    const newTab = window.open('', '_blank');
+                    if (newTab) {
+                        newTab.document.write(`
+                            <html>
+                                <head>
+                                    <title>播放: ${this.truncateText(url, 30)}</title>
+                                    <style>
+                                        body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; }
+                                        video { max-width: 90%; max-height: 90%; }
+                                        .error { color: #ff4444; text-align: center; padding: 20px; }
+                                    </style>
+                                </head>
+                                <body>
+                                    <video controls autoplay>
+                                        <source src="${url}" type="application/x-mpegURL">
+                                        <source src="${url}" type="video/mp4">
+                                        您的浏览器不支持视频播放
+                                    </video>
+                                    <script>
+                                        const video = document.querySelector('video');
+                                        video.addEventListener('error', function() {
+                                            document.body.innerHTML = '<div class="error">播放失败: 该地址可能无效或需要特定播放器</div>';
+                                        });
+                                        video.play().catch(e => console.log('Autoplay failed:', e));
+                                    </script>
+                                </body>
+                            </html>
+                        `);
+                        newTab.document.close();
+                    } else {
+                        alert('无法打开新窗口，请允许弹出窗口');
+                    }
+                } catch (e) {
+                    alert('播放失败: ' + e.message);
                 }
             }
 
@@ -990,7 +981,7 @@
                             <div class="strm-meta">
                                 类型: ${file.type} • 源: ${file.source} • 生成时间: ${new Date(file.createdAt).toLocaleString()}
                             </div>
-                            <div class="strm-url">播放地址: ${file.url.substring(0, 50)}${file.url.length > 50 ? '...' : ''}</div>
+                            <div class="strm-url">播放地址: ${this.truncateText(file.url, 60)}</div>
                             <div class="strm-meta">EMBY路径: ${file.embyPath}</div>
                             <div class="strm-actions">
                                 <button class="btn btn-secondary edit-strm-btn" data-index="${index}">编辑</button>
@@ -1003,7 +994,6 @@
                 
                 list.innerHTML = html;
                 
-                // 添加事件监听
                 document.querySelectorAll('.edit-strm-btn').forEach(btn => {
                     btn.addEventListener('click', () => {
                         const index = parseInt(btn.getAttribute('data-index'));
@@ -1042,16 +1032,14 @@
                 
                 modal.style.display = 'flex';
                 
-                // 查找新源按钮
-                document.getElementById('find-new-source-btn').addEventListener('click', async () => {
+                document.getElementById('find-new-source-btn').onclick = async () => {
                     await this.findNewSourcesForStrm(file.name);
-                });
+                };
                 
-                // 保存按钮
-                document.getElementById('save-strm-btn').addEventListener('click', () => {
+                document.getElementById('save-strm-btn').onclick = () => {
                     const newUrl = document.getElementById('new-strm-url').value.trim() || file.url;
                     this.saveStrmChanges(index, newUrl);
-                });
+                };
             }
 
             static async findNewSourcesForStrm(movieName) {
@@ -1067,16 +1055,18 @@
                 `;
                 
                 try {
-                    // 搜索同名影视
                     const data = await VodApiClient.fetchResources(movieName, 1, 5);
                     
                     if (data.code === 1 && data.list.length > 0) {
                         let sourcesHtml = '';
+                        let foundSources = false;
                         
                         for (const movie of data.list) {
                             if (movie.vod_name !== movieName) continue;
                             
                             const sources = VodApiClient.parsePlaySources(movie.vod_play_from, movie.vod_play_url);
+                            if (sources.length > 0) foundSources = true;
+                            
                             sources.forEach((source, index) => {
                                 sourcesHtml += `
                                     <div class="source-item" style="margin-bottom: 10px; padding: 10px; background: #3a3a3a; border-radius: 4px; cursor: pointer;"
@@ -1084,16 +1074,15 @@
                                          data-name="${source.name}" 
                                          data-title="${source.title}">
                                         <strong>${source.name}</strong> - ${source.title}<br>
-                                        <small style="color: #64b5f6;">${source.url.substring(0, 60)}...</small>
+                                        <small style="color: #64b5f6;">${this.truncateText(source.url, 70)}</small>
                                     </div>
                                 `;
                             });
                         }
                         
-                        if (sourcesHtml) {
+                        if (foundSources) {
                             listElement.innerHTML = sourcesHtml;
                             
-                            // 添加点击事件
                             document.querySelectorAll('#new-sources-list .source-item').forEach(item => {
                                 item.addEventListener('click', () => {
                                     const url = decodeURIComponent(item.getAttribute('data-url'));
@@ -1154,11 +1143,14 @@
                     return;
                 }
                 
-                // 创建ZIP文件
+                if (typeof JSZip === 'undefined') {
+                    alert('JSZip库加载失败，请刷新页面重试');
+                    return;
+                }
+                
                 const zip = new JSZip();
                 
                 files.forEach(file => {
-                    // 从路径中提取文件名和目录结构
                     const pathParts = file.embyPath.split('/');
                     const filename = pathParts.pop();
                     const directory = pathParts.join('/');
@@ -1179,6 +1171,9 @@
                     a.click();
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
+                }).catch(function(error) {
+                    console.error('Error generating ZIP:', error);
+                    alert('生成ZIP文件失败: ' + error.message);
                 });
             }
         }
@@ -1188,7 +1183,6 @@
         // ======================
         class PageRouter {
             static init() {
-                // 导航点击事件
                 document.querySelectorAll('.nav-item').forEach(item => {
                     item.addEventListener('click', (e) => {
                         e.preventDefault();
@@ -1196,7 +1190,6 @@
                     });
                 });
                 
-                // 模态框关闭事件
                 document.getElementById('close-modal').addEventListener('click', () => {
                     document.getElementById('detail-modal').style.display = 'none';
                 });
@@ -1205,7 +1198,6 @@
                     document.getElementById('edit-strm-modal').style.display = 'none';
                 });
                 
-                // 点击模态框外部关闭
                 document.getElementById('detail-modal').addEventListener('click', (e) => {
                     if (e.target === document.getElementById('detail-modal')) {
                         document.getElementById('detail-modal').style.display = 'none';
@@ -1218,7 +1210,6 @@
                     }
                 });
                 
-                // STRM页面按钮
                 document.getElementById('download-all-btn').addEventListener('click', () => {
                     PageRenderer.downloadAllStrmFiles();
                 });
@@ -1229,17 +1220,14 @@
             }
             
             static navigateTo(page) {
-                // 更新导航激活状态
                 document.querySelectorAll('.nav-item').forEach(item => {
                     item.classList.toggle('active', item.getAttribute('data-page') === page);
                 });
                 
-                // 显示对应页面
                 document.getElementById('home-page').style.display = page === 'home' ? 'block' : 'none';
                 document.getElementById('strm-page').style.display = page === 'strm' ? 'block' : 'none';
                 document.getElementById('config-page').style.display = page === 'config' ? 'block' : 'none';
                 
-                // 页面特定逻辑
                 if (page === 'home') {
                     this.loadHomePage();
                 } else if (page === 'strm') {
@@ -1274,38 +1262,10 @@
         // 初始化应用
         // ======================
         document.addEventListener('DOMContentLoaded', async () => {
-            // 初始化配置
             ConfigManager.init();
-            
-            // 初始化路由
             PageRouter.init();
-            
-            // 默认显示首页
             PageRouter.navigateTo('home');
-            
-            // 检查JSZip库
-            if (typeof JSZip === 'undefined') {
-                console.warn('JSZip library not loaded. STRM打包下载功能将不可用。');
-                document.getElementById('download-all-btn').disabled = true;
-                document.getElementById('download-all-btn').title = '需要JSZip库支持';
-            }
         });
-
-        // ======================
-        // 依赖库加载
-        // ======================
-        // 动态加载JSZip库
-        (function() {
-            const script = document.createElement('script');
-            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-            script.onload = function() {
-                console.log('JSZip loaded successfully');
-            };
-            script.onerror = function() {
-                console.error('Failed to load JSZip library');
-            };
-            document.head.appendChild(script);
-        })();
     </script>
 </body>
 </html>
