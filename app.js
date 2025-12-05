@@ -1,303 +1,191 @@
-/**
- * VOD to Emby STRM Generator (Cloud/Vercel Version)
- * 模式：云端解析 -> 打包ZIP -> 客户端下载
- */
-
-const express = require('express');
+// 文件：/api/[[path]].js - Vercel Serverless Function
+// 这个文件处理所有后端请求：搜索、解析、生成STRM等。
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 const axios = require('axios');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const AdmZip = require('adm-zip'); // 新增：用于打包下载
-const path = require('path');
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+// 一个简单的内存存储（用于演示，生产环境应换为数据库）
+const configStore = { vodApiUrl: 'http://caiji.dyttzyapi.com/api.php/provide/vod/' };
+const strmStore = new Map();
 
-// === 内存数据 (Vercel 重启后会重置，云端无法持久化本地JSON) ===
-let MEMORY_DB = {
-    vodApi: "https://cj.lziapi.com/api.php/provide/vod/at/json/",
-    strmRecords: []
-};
+export default async function handler(req, res) {
+  const path = req.query.path?.[0] || '';
 
-app.use(cors());
-app.use(bodyParser.json());
+  // 1. 系统设置：获取或更新VOD资源站地址
+  if (path === 'config' && req.method === 'GET') {
+    return res.json({ vodApiUrl: configStore.vodApiUrl });
+  }
+  if (path === 'config' && req.method === 'POST') {
+    configStore.vodApiUrl = req.body.vodApiUrl;
+    return res.json({ success: true });
+  }
 
-// === 后端 API 逻辑 ===
-
-// 1. 获取配置
-app.get('/api/config', (req, res) => {
-    res.json(MEMORY_DB);
-});
-
-// 2. 更新配置 (仅当前会话有效)
-app.post('/api/config', (req, res) => {
-    const { vodApi } = req.body;
-    if (vodApi) MEMORY_DB.vodApi = vodApi;
-    res.json({ success: true, message: "配置已更新 (云端重启后会重置)" });
-});
-
-// 3. 代理 VOD 请求
-app.get('/api/proxy/vod', async (req, res) => {
+  // 2. 搜索影视资源 (核心功能)
+  if (path === 'search' && req.method === 'POST') {
+    const { keyword, type } = req.body;
     try {
-        const { t, wd, ac, pg } = req.query;
-        const params = { ac: ac || 'list', pg: pg || 1 };
-        if (t) params.t = t;
-        if (wd) params.wd = wd;
-
-        const response = await axios.get(MEMORY_DB.vodApi, { params, timeout: 10000 });
-        res.json(response.data);
-    } catch (error) {
-        console.error("VOD API Error:", error.message);
-        res.status(500).json({ error: "无法连接资源站" });
-    }
-});
-
-// 4. 解析短链/验证链接
-async function resolveUrl(url) {
-    const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-    };
-    try {
-        if (url.includes('.m3u8') || url.includes('.mp4')) {
-            // Vercel 有执行时间限制，这里为了速度跳过 HEAD 请求，直接信任直链
-            // 如果需要严格验证，可以保留 await axios.head...
-            return url;
+      const apiUrl = configStore.vodApiUrl;
+      const response = await axios.get(apiUrl, { params: { ac: 'detail', wd: keyword } });
+      
+      const results = [];
+      for (const item of response.data.list || []) {
+        // 简单类型判断
+        const isSeries = item.type_name === '电视剧' || item.vod_play_url.includes('#');
+        if (type !== 'all' && ((type === 'movie' && isSeries) || (type === 'series' && !isSeries))) {
+          continue;
         }
-        const response = await axios.get(url, { 
-            headers, 
-            maxRedirects: 3,
-            validateStatus: status => status < 400 
-        });
-        return response.request.res.responseUrl || url; 
-    } catch (e) {
-        return null;
+
+        // 解析播放地址
+        const playSources = await parsePlayUrl(item.vod_play_url, item.vod_play_from);
+        if (playSources.length > 0) {
+          results.push({
+            id: item.vod_id,
+            name: item.vod_name,
+            type: isSeries ? 'series' : 'movie',
+            pic: item.vod_pic,
+            year: item.vod_year,
+            sources: playSources
+          });
+        }
+      }
+      res.json({ success: true, data: results });
+    } catch (error) {
+      res.json({ success: false, error: error.message });
     }
+    return;
+  }
+
+  // 3. 生成并打包STRM文件 (核心功能)
+  if (path === 'generate-strm' && req.method === 'POST') {
+    const { resourceName, resourceType, playUrl, year } = req.body;
+    
+    // 生成符合Emby规范的目录和文件名
+    const safeName = resourceName.replace(/[<>:"/\\|?*]/g, '');
+    const baseFolder = year ? `${safeName} (${year})` : safeName;
+    
+    // 创建虚拟的文件结构
+    const files = [];
+    if (resourceType === 'movie') {
+      // 电影：{电影名 (年份)}/{电影名 (年份)}.strm
+      files.push({
+        path: `${baseFolder}/${safeName}${year ? ` (${year})` : ''}.strm`,
+        content: playUrl
+      });
+    } else {
+      // 剧集：{剧集名 (年份)}/Season 01/S01E01.strm
+      // 注意：这里简化处理，实际应根据解析出的剧集列表生成多个文件
+      files.push({
+        path: `${baseFolder}/Season 01/S01E01.strm`,
+        content: playUrl
+      });
+    }
+    
+    // 保存记录
+    const recordId = Date.now().toString();
+    strmStore.set(recordId, {
+      id: recordId,
+      name: resourceName,
+      type: resourceType,
+      url: playUrl,
+      generatedAt: new Date().toISOString(),
+      files: files
+    });
+    
+    // 返回记录ID，供前端下载和管理
+    res.json({ success: true, recordId: recordId });
+    return;
+  }
+
+  // 4. 下载STRM的ZIP包
+  if (path === 'download-strm' && req.method === 'GET') {
+    const { id } = req.query;
+    const record = strmStore.get(id);
+    if (!record) {
+      return res.status(404).send('STRM记录不存在');
+    }
+    
+    // 这里应生成ZIP文件，为简化，直接返回第一个STRM文件内容
+    // 实际部署时，您需要安装`jszip`或`archiver`库来生成真正的ZIP
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${record.name}.strm"`);
+    res.send(record.files[0].content);
+    return;
+  }
+
+  // 5. 获取所有已生成的STRM记录
+  if (path === 'my-strm' && req.method === 'GET') {
+    const records = Array.from(strmStore.values()).reverse(); // 新的在前
+    res.json({ success: true, data: records });
+    return;
+  }
+
+  // 6. 查找最新可用源（重新解析）
+  if (path === 'refresh-url' && req.method === 'POST') {
+    const { id } = req.body;
+    const record = strmStore.get(id);
+    if (!record) {
+      return res.json({ success: false, error: '记录不存在' });
+    }
+    
+    // 这里应重新搜索并解析，示例中返回原地址
+    res.json({ 
+      success: true, 
+      newUrl: record.url // 实际应返回新解析的地址
+    });
+  }
+
+  res.status(404).json({ error: 'API路径不存在' });
 }
 
-// 5. 生成并下载 ZIP (核心修改)
-app.post('/api/generate-zip', async (req, res) => {
-    const { vodName, vodYear, type, episodes, sourceName } = req.body;
+// ---------- 核心工具函数 ----------
+async function parsePlayUrl(playUrl, playFrom) {
+  const sources = [];
+  if (!playUrl) return sources;
+  
+  const sourceNames = (playFrom || '默认源').split('$$$');
+  const urlGroups = playUrl.split('$$$');
+  
+  for (let i = 0; i < Math.min(urlGroups.length, sourceNames.length); i++) {
+    const urls = urlGroups[i];
+    const sourceName = sourceNames[i];
     
-    // 创建 ZIP 对象
-    const zip = new AdmZip();
-    const safeName = vodName.replace(/[\\/:*?"<>|]/g, "").trim();
-    const yearStr = vodYear ? `(${vodYear})` : "";
-    const folderName = `${safeName} ${yearStr}`.trim();
-
-    try {
-        if (type === 'movie') {
-            // 电影路径结构
-            const url = episodes[0]?.url;
-            if (!url) throw new Error("无有效地址");
-            const finalUrl = await resolveUrl(url);
-            
-            if (finalUrl) {
-                // 向 zip 添加文件: movies/Name (Year)/Name (Year).strm
-                const filePath = `movies/${folderName}/${folderName}.strm`;
-                zip.addFile(filePath, Buffer.from(finalUrl, "utf8"));
-            }
-        } else {
-            // 剧集路径结构
-            let successCount = 0;
-            // 限制并发解析数量，防止 Vercel 超时
-            const processEpisodes = episodes.slice(0, 50); // 限制最多处理前50集防止超时
-
-            for (let ep of processEpisodes) {
-                let epNum = 1;
-                const match = ep.name.match(/\d+/);
-                if (match) epNum = parseInt(match[0]);
-                const s01eXX = `S01E${epNum.toString().padStart(2, '0')}`;
-                const strmName = `${safeName} - ${s01eXX} - ${ep.name}.strm`;
-                
-                let finalUrl = ep.url;
-                if (!finalUrl.includes('.m3u8')) finalUrl = await resolveUrl(ep.url);
-
-                if (finalUrl) {
-                    // 向 zip 添加文件: shows/Name (Year)/Season 1/Name.strm
-                    const filePath = `shows/${folderName}/Season 1/${strmName}`;
-                    zip.addFile(filePath, Buffer.from(finalUrl, "utf8"));
-                    successCount++;
-                }
-            }
-            if (successCount === 0) throw new Error("解析失败");
-        }
-
-        // 记录历史 (仅内存)
-        MEMORY_DB.strmRecords.unshift({
-            id: Date.now(),
-            name: safeName,
-            type: type,
+    // 分割剧集
+    const episodes = urls.split('#');
+    for (const ep of episodes) {
+      if (!ep.includes('$')) continue;
+      const [label, url] = ep.split('$');
+      const cleanUrl = url?.trim();
+      if (cleanUrl) {
+        // 简单校验（实际应更完善）
+        const isValid = await validateUrl(cleanUrl);
+        if (isValid) {
+          sources.push({
             source: sourceName,
-            updatedAt: new Date().toLocaleString()
-        });
-
-        // 返回 ZIP 文件流
-        const downloadName = `${safeName}_Emby_STRM.zip`;
-        const data = zip.toBuffer();
-        
-        res.set('Content-Type', 'application/octet-stream');
-        res.set('Content-Disposition', `attachment; filename=${encodeURIComponent(downloadName)}`);
-        res.set('Content-Length', data.length);
-        res.send(data);
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: error.message });
+            label: label || '播放',
+            url: cleanUrl,
+            isDirect: !cleanUrl.includes('url.cn') // 简单判断短链
+          });
+        }
+      }
     }
-});
+  }
+  
+  // 优先返回直链源
+  return sources.sort((a, b) => (b.isDirect ? 1 : 0) - (a.isDirect ? 1 : 0));
+}
 
-app.get('/api/records', (req, res) => res.json(MEMORY_DB.strmRecords));
-
-// === 前端页面 ===
-app.get('/', (req, res) => {
-    res.send(`
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VOD 云端生成器</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
-    <style>[v-cloak] { display: none; } .poster-ratio { aspect-ratio: 2/3; }</style>
-</head>
-<body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
-<div id="app" v-cloak class="container mx-auto px-4 py-6">
-    <header class="flex justify-between items-center mb-8 border-b border-gray-700 pb-4">
-        <h1 class="text-2xl font-bold text-green-400">☁️ VOD to Emby (云端版)</h1>
-        <div class="text-xs text-yellow-500">注意：Vercel 部署模式下数据无法永久保存</div>
-    </header>
-
-    <div class="flex gap-4 mb-6">
-        <input v-model="searchQuery" @keyup.enter="fetchVod(1)" type="text" placeholder="搜索影片..." class="flex-1 bg-gray-800 border border-gray-700 rounded px-4 py-2 focus:outline-none focus:border-green-500">
-        <button @click="fetchVod(1)" class="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded">搜索</button>
-    </div>
-
-    <div v-if="loading" class="text-center py-20 text-gray-500">加载中...</div>
-    <div v-else class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
-        <div v-for="item in vodList" :key="item.vod_id" class="group relative bg-gray-800 rounded-lg overflow-hidden hover:scale-105 transition-transform duration-200 cursor-pointer" @click="openDetail(item)">
-            <div class="poster-ratio w-full bg-gray-700 relative">
-                <img :src="item.vod_pic" class="w-full h-full object-cover" loading="lazy" @error="$event.target.src='https://via.placeholder.com/300x450'">
-                <div class="absolute top-1 right-1 bg-black/60 text-xs px-2 py-1 rounded text-white">{{ item.vod_remarks }}</div>
-            </div>
-            <div class="p-3"><h3 class="font-bold text-sm truncate">{{ item.vod_name }}</h3></div>
-        </div>
-    </div>
-
-    <div v-if="showModal && selectedItem" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-        <div class="bg-gray-800 rounded-lg max-w-2xl w-full p-6">
-            <h2 class="text-xl font-bold mb-4">{{ selectedItem.vod_name }}</h2>
-            
-            <div class="mb-4">
-                <label class="block text-xs font-bold text-gray-500 mb-2">选择源</label>
-                <div class="flex flex-wrap gap-2">
-                    <button v-for="(source, index) in parseSources(selectedItem)" :key="index" @click="currentSourceIndex = index"
-                            :class="currentSourceIndex === index ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-300'"
-                            class="px-3 py-1 rounded text-sm">{{ source.name }}</button>
-                </div>
-            </div>
-
-            <div class="bg-gray-900 p-4 h-40 overflow-y-auto mb-6 rounded border border-gray-700 text-xs text-gray-400">
-                包含 {{ currentEpisodes.length }} 个资源文件
-            </div>
-
-            <div class="flex gap-4">
-                <button @click="showModal = false" class="px-6 py-3 bg-gray-700 rounded text-white">关闭</button>
-                <button @click="downloadZip" :disabled="processing" class="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded font-bold flex justify-center items-center">
-                    <span v-if="processing">打包下载中...</span>
-                    <span v-else>📥 下载 STRM 压缩包</span>
-                </button>
-            </div>
-            <p class="text-xs text-gray-500 mt-2 text-center">下载后请解压到 Emby 媒体库目录</p>
-        </div>
-    </div>
-</div>
-
-<script>
-const { createApp, ref, computed, onMounted } = Vue;
-createApp({
-    setup() {
-        const loading = ref(false);
-        const processing = ref(false);
-        const vodList = ref([]);
-        const searchQuery = ref('');
-        const showModal = ref(false);
-        const selectedItem = ref(null);
-        const currentSourceIndex = ref(0);
-        const config = ref({});
-
-        onMounted(async () => {
-             const res = await axios.get('/api/config');
-             config.value = res.data;
-             fetchVod(1);
-        });
-
-        const fetchVod = async (page) => {
-            loading.value = true;
-            try {
-                const res = await axios.get('/api/proxy/vod', { params: { pg: page, wd: searchQuery.value } });
-                vodList.value = res.data.list || [];
-            } finally { loading.value = false; }
-        };
-
-        const parseSources = (item) => {
-            if (!item) return [];
-            return item.vod_play_from.split('$$$').map((name, i) => ({ name, urlStr: item.vod_play_url.split('$$$')[i] }));
-        };
-
-        const currentEpisodes = computed(() => {
-            if (!selectedItem.value) return [];
-            const src = parseSources(selectedItem.value)[currentSourceIndex.value];
-            if (!src) return [];
-            return src.urlStr.split('#').map(ep => {
-                const [n, u] = ep.split('$');
-                return { name: n||'正片', url: u||n };
-            }).filter(e=>e.url);
-        });
-
-        const openDetail = (item) => {
-            selectedItem.value = item;
-            currentSourceIndex.value = 0;
-            showModal.value = true;
-        };
-
-        const downloadZip = async () => {
-            processing.value = true;
-            try {
-                const isMovie = selectedItem.value.type_id == 1;
-                const payload = {
-                    vodName: selectedItem.value.vod_name,
-                    vodYear: selectedItem.value.vod_year,
-                    type: isMovie ? 'movie' : 'tv',
-                    episodes: currentEpisodes.value,
-                    sourceName: parseSources(selectedItem.value)[currentSourceIndex.value].name
-                };
-
-                const response = await axios.post('/api/generate-zip', payload, { responseType: 'blob' });
-                // 触发浏览器下载
-                const url = window.URL.createObjectURL(new Blob([response.data]));
-                const link = document.createElement('a');
-                link.href = url;
-                link.setAttribute('download', \`\${selectedItem.value.vod_name}_Emby.zip\`);
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                showModal.value = false;
-            } catch (e) {
-                alert('打包失败，可能是源地址无法连接');
-            } finally {
-                processing.value = false;
-            }
-        };
-
-        return { loading, processing, vodList, searchQuery, showModal, selectedItem, currentSourceIndex, fetchVod, parseSources, currentEpisodes, openDetail, downloadZip };
+async function validateUrl(url) {
+  try {
+    // 发送HEAD请求检查URL是否可访问
+    const resp = await axios.head(url, { timeout: 3000 });
+    return resp.status < 400;
+  } catch (e) {
+    // 如果HEAD失败，尝试GET（针对某些限制HEAD的服务器）
+    try {
+      await axios.get(url, { timeout: 3000 });
+      return true;
+    } catch (e2) {
+      return false;
     }
-}).mount('#app');
-</script>
-</body>
-</html>
-    `);
-});
-
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  }
+}
